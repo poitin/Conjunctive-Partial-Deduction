@@ -44,7 +44,6 @@ trans' ts cs m = case find (\(t,ts') -> isJust (renamingTerm (Conjunction ts') (
                                   Nothing ->  case unfold ts cs of
                                                     [] -> Leaf True
                                                     [([Truth b],env)] -> Leaf b
-                                                    [(ts',env)] -> trans' (map (instantiateTerm env) ts') cs m
                                                     tss -> let xs = foldr varsTerm' [] ts
                                                                x = renameVar (map atomName (fst(unzip m))) "p"
                                                                t = Atom x (map Var xs)
