@@ -31,7 +31,7 @@ append([X|XS],YS,[X|ZS]) <- append(XS,YS,ZS).
 To apply the conjunctive partial deduction transformation to the current program:
 
 LOG> :trans
-p([X|XS'],YS,[X|ZS'],VS,[X|ZS'']) <- p(XS',YS,ZS',VS,ZS'').
+p([X|XS'],YS,[X|ZS'],VS,[X|ZS'']) <- p(XS',YS,ZS',VS,ZS'').<br>
 p([],ZS,ZS,VS,WS) <- p'(ZS,VS,WS).
 p'([X|XS'],VS,[X|ZS']) <- p'(XS',VS,ZS').
 p'([],WS,WS).
