@@ -1,7 +1,10 @@
 module Term where
 
+import Prelude hiding ((<>))
+import Exception
 import Data.Char
 import Data.Maybe
+import Data.List
 import Data.Foldable
 import Control.Monad
 import Text.PrettyPrint
@@ -9,11 +12,10 @@ import Text.ParserCombinators.Parsec as P
 import Text.ParserCombinators.Parsec.Expr
 import qualified Text.ParserCombinators.Parsec.Token as T
 import Text.ParserCombinators.Parsec.Language
-import Debug.Trace
 
 -- programs consist of a goal conjunction and a set of clauses
 
-type Prog = ([Term],[(Term,[Term])])
+type Prog = (Term,[(Term,Term)])
 
 showprog = render.prettyProg
 
@@ -30,111 +32,146 @@ instance Show Term where
 
 -- standard unification which includes occurs check
 
-unify t t' env = unify' (walk env t) (walk env t') env
-unify' (Var x) t env = if x `elem` varsTerm t then Nothing else Just ((x,t):env)
-unify' t (Var x) env = if x `elem` varsTerm t then Nothing else Just ((x,t):env)
-unify' (Atom a ts) (Atom a' ts') env | a==a' = foldlM (\env (t,t') -> unify t t' env) env (zip ts ts')
-unify' t t' env = Nothing
+unify t t' e = unify' (walk e t) (walk e t') e
 
-walk env (Var x) = case lookup x env of
-                      Nothing -> Var x
-                      Just t -> walk env t
-walk env (Atom a ts) = Atom a (map (walk env) ts)
+unify' (Var x) t e = if x `elem` vars t then Nothing else Just ((x,t):e)
+unify' t (Var x) e = if x `elem` vars t then Nothing else Just ((x,t):e)
+unify' (Atom a ts) (Atom a' ts') e | a==a' = foldlM (\e (t,t') -> unify t t' e) e (zip ts ts')
+unify' (Conjunction ts) (Conjunction ts') e | length ts == length ts' = foldlM (\e (t,t') -> unify t t' e) e (zip ts ts')
+unify' (Truth b) (Truth b') e | b==b' = Just e
+unify' t t' e = Nothing
 
--- checking for renamings for folding
+walk e (Var x) = case lookup x e of
+                    Nothing -> Var x
+                    Just t -> walk e t
+walk e (Atom a ts) = Atom a (map (walk e) ts)
+walk e (Conjunction ts) = Conjunction (map (walk e) ts)
+walk e (Truth b) = Truth b
 
-renamingTerm (Var x) (Var x') r = if x `elem` fst (unzip r)
-                                  then if (x,x') `elem` r then Just r else Nothing
-                                  else Just ((x,x'):r)
-renamingTerm (Atom a ts) (Atom a' ts') r | a==a' = foldrM (\(t,t') r -> renamingTerm t t' r) r (zip ts ts')
-renamingTerm (Conjunction []) (Conjunction []) r = Just r
-renamingTerm (Conjunction (t:ts)) (Conjunction (t':ts')) r = renamingTerm t t' r >>= renamingTerm (Conjunction ts) (Conjunction ts')
-renamingTerm t t' r = Nothing
+-- checking for instance for folding
 
--- chacking for embeddings for generalisation
+isInst t t' = isJust (inst t t' [])
 
-embeddingTerm t u r = mplus (coupleTerm t u r) (diveTerm t u r)
+inst (Var x) t s = if   x `elem` fst (unzip s)
+                   then if (x,t) `elem` s then Just s else Nothing
+                   else Just ((x,t):s)
+inst (Atom a ts) (Atom a' ts') s | a==a' && length ts==length ts' = foldrM (\(t,t') s -> inst t t' s) s (zip ts ts')
+inst (Conjunction ts) (Conjunction ts') s | length ts==length ts' = foldrM (\(t,t') s -> inst t t' s) s (zip ts ts')
+inst (Truth b) (Truth b') s | b==b' = Just s
+inst t t' s = Nothing
 
-coupleTerm (Var x) (Var x') r = if   x `elem` fst (unzip r)
-                                then if (x,x') `elem` r then Just r else Nothing
-                                else Just ((x,x'):r)
-coupleTerm (Atom a ts) (Atom a' ts') r | a==a' = foldrM (\(t,t') r -> embeddingTerm t t' r) r (zip ts ts')
-coupleTerm (Conjunction []) (Conjunction []) r = Just r
-coupleTerm (Conjunction (t:ts)) (Conjunction (t':ts')) r = coupleTerm t t' r >>= embeddingTerm (Conjunction ts) (Conjunction ts')
-coupleTerm t t' r = Nothing
+-- chacking for embedding for generalisation
 
-diveTerm t (Atom a ts) r = msum (map (\t' -> embeddingTerm t t' r) ts)
-diveTerm t (Conjunction (t':ts')) r = embeddingTerm t (Conjunction ts') r
-diveTerm t t' r = Nothing
+embedding (t,u) = couple t u || dive t u
 
--- generalisation is either done by splitting if more conjuncts are added, or most specific generalisation otherwise
+couple (Var x) (Var x') = True
+couple (Atom a ts) (Atom a' ts') | a==a' && length ts==length ts' = all embedding (zip ts ts')
+couple (Conjunction ts) (Conjunction ts') | length ts==length ts' = all embedding (zip ts ts')
+couple (Truth b) (Truth b') = True
+couple t t' = False
 
-split ts [] r = ([],ts)
-split (t:ts) (t':ts') r = if   isJust $ coupleTerm t' t r
-                          then let (ts1,ts2) = split ts ts' r
-                               in  (t:ts1,ts2)
-                          else ([],t:ts)
+dive t (Atom a ts) = any (\t' -> embedding (t,t')) ts
+dive t (Conjunction ts) = any (\t' -> embedding (t,t')) ts
+dive t t' = False
 
-generaliseTerm t t' = generaliseTerm' t t' (varsTerm t) [] []
+-- most specific generalisation
 
-generaliseTerm' (Var x) (Var x') xs s1 s2 = (Var x,s1,s2)
-generaliseTerm' (Atom a ts) (Atom a' ts') xs s1 s2 | a==a' = let (ts'',s1',s2') = foldr (\(t,t') (ts,s1,s2) -> let (t'',s1',s2') = generaliseTerm' t t' xs s1 s2
-                                                                                                               in  (t'':ts,s1',s2')) ([],s1,s2) (zip ts ts')
-                                                             in  (Atom a ts'',s1',s2')
-generaliseTerm' (Conjunction []) (Conjunction []) xs s1 s2 = (Conjunction [],s1,s2)
-generaliseTerm' (Conjunction (t:ts)) (Conjunction (t':ts')) xs s1 s2 = let (t'',s1',s2') = generaliseTerm' t t' xs s1 s2
-                                                                           (Conjunction ts'',s1'',s2'') = generaliseTerm' (Conjunction ts) (Conjunction ts') xs s1' s2'
-                                                                       in  (Conjunction (t'':ts''),s1'',s2'')
-generaliseTerm' t t' xs s1 s2 = case find (\(x,u) -> t==u && (lookup x s2 == Just t')) s1 of
-                                   Just (x,u) -> (Var x,s1,s2)
-                                   Nothing -> let x = renameVar (xs++fst(unzip s1)) "X"
-                                              in  (Var x,(x,t):s1,(x,t'):s2)
+generalise t t' = generalise' t t' (vars t) [] []
 
--- evaluate a conjunction, putting the resultants in rs
--- this is a depth-first evaluation which evaluates all resultants, so may not terminate!
+generalise' (Var x) (Var x') xs s1 s2 | x==x' = (Var x,s1,s2)
+generalise' (Atom a ts) (Atom a' ts') xs s1 s2 | a==a' = let (ts'',s1',s2') = foldr (\(t,t') (ts,s1,s2) -> let (t'',s1',s2') = generalise' t t' xs s1 s2
+                                                                                                           in  (t'':ts,s1',s2')) ([],s1,s2) (zip ts ts')
+                                                         in  (Atom a ts'',s1',s2')
+generalise' (Conjunction ts) (Conjunction ts') xs s1 s2 = let ((s1',s2'),ts'') = mapAccumL (\(s1,s2) (t,t') -> let (t'',s1',s2') = generalise' t t' xs s1 s2
+                                                                                                               in  ((s1',s2'),t'')) (s1,s2) (zip ts ts')
+                                                          in  (Conjunction ts'',s1',s2')
+generalise' (Truth b) (Truth b') xs s1 s2 | b==b' = (Truth b,s1,s2)
+generalise' t t' xs s1 s2 = case find (\(x,u) -> t==u && (lookup x s2 == Just t')) s1 of
+                               Just (x,u) -> (Var x,s1,s2)
+                               Nothing -> let x = renameVar (xs++fst(unzip s1)) "X"
+                                          in  (Var x,(x,t):s1,(x,t'):s2)
 
-eval rs [] cs = [rs]
-eval rs c@(t:ts) cs = let tss = [(ts',fromJust env) | (h,ts) <- cs,let (h',ts') = renameClause (varsTerm (Conjunction c)) (h,ts),let env = unify h' t [],isJust env]
-                      in  concat [eval (map (instantiateTerm env) rs) (map (instantiateTerm env) (ts'++ts)) cs | (ts',env) <- tss]
+-- split conjunction resulting from generalisation
 
--- unfold a conjunction; allow non-determinate unfolding only for the first predicate; determinate unfolding for all remaining predicates
+split (Conjunction ts) s = split' (flatten ts) s
+split t s = [t]
 
-unfold ts cs = nondetunfold ts cs (foldr varsTerm' [] ts) []
-nondetunfold [] cs vs env = [([],env)]
-nondetunfold (t:ts) cs vs env = let tss = [(ts',fromJust env') | (h,ts) <- cs,let (h',ts') = renameClause (vs++varsEnv env) (h,ts),let env' = unify h' t env,isJust env']
-                                in  if   null tss
-                                    then [([Truth False],env)]
-                                    else [(ts'++ts'',env'') | (ts',env') <- tss, let (ts'',env'') = detunfold ts cs vs env']
-detunfold [] cs vs env = ([],env)
-detunfold (t:ts) cs vs env = let tss = [(ts',fromJust env') | (h,ts) <- cs,let (h',ts') = renameClause (vs++varsEnv env) (h,ts),let env' = unify h' t env,isJust env']
-                                 (ts',env') = if length tss == 1 then head tss else ([t],env)
-                                 (ts'',env'') = detunfold ts cs vs env'
-                             in (ts'++ts'',env'')
+split' [] s = []
+split' (Var x:ts) s = instantiate s (Var x):split' ts s
+split' (Conjunction ts:ts') s = split' (ts++ts') s
+split' ts s = let (ts1,ts2) = break isVar ts
+              in  makeConjunction ts1:split' ts2 s
 
--- instantiate with an environment
+flatten [] = []
+flatten (Conjunction ts:ts') = flatten (ts++ts')
+flatten (t:ts) = t:flatten ts
 
-instantiateTerm env (Var x) = walk env (Var x)
-instantiateTerm env (Atom a ts) = Atom a (map (instantiateTerm env) ts)
-instantiateTerm env (Conjunction ts) = Conjunction (map (instantiateTerm env) ts)
+isVar (Var x) = True
+isVar t = False
 
--- return the variables
+-- instantiate with a substitution
 
+instantiate s (Var x) = fromMaybe (Var x) (lookup x s)
+instantiate s (Atom a ts) = Atom a (map (instantiate s) ts)
+instantiate s (Conjunction ts) = Conjunction (map (instantiate s) ts)
+instantiate s (Truth b) = Truth b
 
-varsTerm t = varsTerm' t []
-varsTerm' (Var x) xs = if x `elem` xs then xs else x:xs
-varsTerm' (Atom a ts) xs = foldr varsTerm' xs ts
-varsTerm' (Conjunction ts) xs = foldr varsTerm' xs ts
+-- evaluate a conjunction: this is a depth-first evaluation which evaluates all resultants, so may not terminate!
 
-varsEnv env = varsEnv' env []
-varsEnv' [] xs = xs
-varsEnv' ((x,t):env) xs = varsEnv' env $ x:varsTerm' t xs
+eval t d = let xs = vars t
+           in  [map (walk e.Var) xs | e <- eval' t d [] xs]
+
+eval' (Truth True) d e xs = [e]
+eval' t d e xs = concat [eval' t' d e' xs' | (t',e',xs') <- unfold t d e xs]
+
+matches t d e xs = [(h,t') | (h,t') <- map (renameClause xs) d, isJust (unify h t e)]
+
+-- unfold a term
+
+unfold t d e xs = concat [returnval (furtherUnfold t' [] d e' xs') | (t',e',xs') <- leftUnfold t d e xs]
+
+leftUnfold (Truth True) d e xs = [(Truth True,e,xs)]
+leftUnfold (t@(Atom _ _)) d e xs = [(t',fromJust (unify h t e),xs++vars h++vars t') | (h,t') <- matches t d e xs]
+leftUnfold (Conjunction (t:ts)) d e xs = [(makeConjunction (t':ts),e',xs') | (t',e',xs') <- leftUnfold t d e xs]
+
+-- locally unfold until global choice point
+
+furtherUnfold (Truth True) m d e xs = return [(Truth True,e,xs)]
+furtherUnfold (t@(Atom _ _)) m d e xs = let t' = walk e t
+                                        in  case find (`couple` t') m of
+                                               Just t'' -> throw t''
+                                               Nothing ->  let handler t'' = if   t'==t''
+                                                                             then return [(t,e,xs)]
+                                                                             else throw t''
+                                                           in  handle (do
+                                                                       texs <- mapM (\(t,e,xs) -> furtherUnfold t (t':m) d e xs) (leftUnfold t d e xs)
+                                                                       return (concat texs)
+                                                                      ) handler
+furtherUnfold (Conjunction ts) m d e xs = do
+                                          tsexs <- furtherUnfold' ts m d e xs
+                                          return [(makeConjunction ts',e',xs') | (ts',e',xs') <- tsexs]
+
+furtherUnfold' [] m d e xs = return [([],e,xs)]
+furtherUnfold' (t:ts) m d e xs = do
+                                 texs <- furtherUnfold t m d e xs
+                                 tsexss <- mapM (\(t',e',xs') -> furtherUnfold' ts m d e' xs') texs
+                                 return [(t':ts',e'',xs'') | ((t',e',xs'),tsexs) <- zip texs tsexss, (ts',e'',xs'') <- tsexs]
+
+-- variables in a term
+
+vars t = vars' t []
+
+vars' (Var x) xs = if x `elem` xs then xs else x:xs
+vars' (Atom a ts) xs = foldr vars' xs ts
+vars' (Conjunction ts) xs = foldr vars' xs ts
+vars' (Truth b) xs = xs
 
 -- rename variables
 
-renameClause xs (h,ts) = let xs' = foldr varsTerm' (varsTerm h) ts
-                             xs'' = renameVars xs xs'
-                             r = zip xs' xs''
-                         in  (renameTerm r h,map (renameTerm r) ts)
+renameClause xs (h,t) = let xs' = vars' t (vars h)
+                            xs'' = renameVars xs xs'
+                            r = zip xs' xs''
+                        in  (renameTerm r h,renameTerm r t)
 
 renameTerm r (Var x) = case lookup x r of
                           Nothing -> Var x
@@ -142,10 +179,11 @@ renameTerm r (Var x) = case lookup x r of
 renameTerm r (Atom a ts) = Atom a (map (renameTerm r) ts)
 
 renameTerm r (Conjunction ts) = Conjunction (map (renameTerm r) ts)
+renameTerm r (Truth b) = Truth b
 
 renameVar xs x = if x `elem` xs then renameVar xs (x++"'") else x
 
-renameVars xs vs = take (length vs) (foldr (\v xs -> let v' = renameVar xs v in v':xs) xs vs)
+renameVars xs xs' = take (length xs') (foldr (\x xs -> let x' = renameVar xs x in x':xs) xs xs')
 
 renameAtom r (Atom a ts) = case lookup a r of
                               Nothing -> Atom a ts
@@ -153,12 +191,26 @@ renameAtom r (Atom a ts) = case lookup a r of
 
 atomName (Atom a ts) = a
 
+-- convert a list of terms into a conjunction
+
+makeConjunction ts = makeConjunction' (simplify ts)
+
+makeConjunction' [] = Truth True
+makeConjunction' [t] = t
+makeConjunction' ts = Conjunction ts
+
+-- simplify a conjunction to remove true conjuncts
+
+simplify [] = []
+simplify (Truth True:ts) = simplify ts
+simplify (t:ts) = t:simplify ts
+
 -- pretty printing
 
-prettyProg (ts,cs) = vcat (map prettyClause cs) $$ text "<-" <+> prettyTerm (Conjunction ts) <> text "."
+prettyProg (t,d) = vcat (map prettyClause d) $$ text "<-" <+> prettyTerm t <> text "."
 
-prettyClause (h,[]) = prettyTerm h <> text "."
-prettyClause (h,ts) = prettyTerm h <+> text "<-" <+> prettyTerm (Conjunction ts) <> text "."
+prettyClause (h,Truth True) = prettyTerm h <> text "."
+prettyClause (h,t) = prettyTerm h <+> text "<-" <+> prettyTerm t <> text "."
 
 
 
@@ -169,8 +221,7 @@ prettyTerm t@(Atom a ts)
    | null ts = text a
    | otherwise = text a <> parens (hcat $ punctuate comma $ map prettyTerm ts)
 prettyTerm (Conjunction []) = text "true"
-prettyTerm (Conjunction [t]) = prettyTerm t
-prettyTerm (Conjunction (t:ts)) = prettyTerm t <> text "," <> prettyTerm (Conjunction ts)
+prettyTerm (Conjunction ts) = hcat (punctuate comma (map prettyTerm ts))
 prettyTerm (Truth b) = if b then text "true" else text "false"
 
 isList (Atom "nil" []) = True
@@ -215,25 +266,23 @@ reserved   = T.reserved lexer
 natural    = T.natural lexer
 
 prog = do
-       cs <- many1 clause
-       ts <- conjunction
-       return (ts,cs)
-
-conjunction = do
-              symbol "<-"
-              ts <- sepBy1 structure (symbol ",")
-              symbol "."
-              return ts
+       d <- many1 clause
+       t <- body
+       return (t,d)
 
 clause = do
          h <- structure
-         ts <- body
-         return (h,ts)
+         t <- body
+         return (h,t)
 
-body =     conjunction
-       <|> do
-           symbol "."
-           return []
+body = do
+       symbol "<-"
+       ts <- sepBy1 structure (symbol ",")
+       symbol "."
+       return $ makeConjunction ts
+   <|> do
+       symbol "."
+       return $ Truth True
 
 structure = do
             a <- atom
@@ -241,8 +290,8 @@ structure = do
             return $ Atom a ts
 
 term =     do
-           v <- identifier
-           return $ Var v
+           x <- identifier
+           return $ Var x
        <|> structure
        <|> do
            n <- natural
