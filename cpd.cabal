@@ -1,0 +1,46 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.31.2.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: 4b768cbc6531656a0b8ddf8241e8631164ac43e788a9c930a51edc6722ceae9f
+
+name:           cpd
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/poitin/Conjunctive-Partial-Deduction/README.md>
+homepage:       https://github.com/poitin/Conjunctive-Partial-Deduction/README.md
+bug-reports:    https://github.com/poitin/Conjunctive-Partial-Deduction/issues
+author:         Author name here
+maintainer:     hamilton@computing.dcu.ie
+copyright:      Geoff Hamilton
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    ChangeLog.md
+
+source-repository head
+  type: git
+  location: https://github.com/poitin/Conjunctive-Partial-Deduction
+
+executable cpd-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_cpd
+    , Tree
+    , Term
+    , Exception
+  hs-source-dirs:
+      src
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      base >=4.7 && <5
+    , parsec
+    , pretty
+    , directory
+    , process
+  default-language: Haskell2010
+
+

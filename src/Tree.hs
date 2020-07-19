@@ -73,3 +73,4 @@ trans' t m d e xs = let t' = walk e t
 fold t m d texs = do
                   bs <- mapM (\(t',e,xs) -> trans' t' (t:m) d e xs) texs
                   return (Node t (Or [(e,b) | ((t,e,xs),b) <- zip texs bs]))
+
