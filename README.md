@@ -1,1 +1,1 @@
-# cpd
+# Conjunctive Partial Deduction
