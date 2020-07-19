@@ -42,7 +42,7 @@ To evaluate the current program:
 LOG> :eval
 
 This will prompt for values of the free variables. 
-The terms entered for these values may themsleves contain free variables which will be instantiated during evaluation
+The terms entered for these values may themselves contain free variables which will be instantiated during evaluation
 
 XS = [1,2,3]
 YS = [4,5,6]
