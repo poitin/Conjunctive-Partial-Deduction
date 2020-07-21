@@ -24,7 +24,6 @@ showprog = render.prettyProg
 data Term = Var String
           | Atom String [Term]
           | Conjunction [Term]
-          | Truth Bool
           deriving Eq
 
 instance Show Term where
@@ -38,7 +37,6 @@ unify' (Var x) t e = if x `elem` vars t then Nothing else Just ((x,t):e)
 unify' t (Var x) e = if x `elem` vars t then Nothing else Just ((x,t):e)
 unify' (Atom a ts) (Atom a' ts') e | a==a' = foldlM (\e (t,t') -> unify t t' e) e (zip ts ts')
 unify' (Conjunction ts) (Conjunction ts') e | length ts == length ts' = foldlM (\e (t,t') -> unify t t' e) e (zip ts ts')
-unify' (Truth b) (Truth b') e | b==b' = Just e
 unify' t t' e = Nothing
 
 walk e (Var x) = case lookup x e of
@@ -46,7 +44,6 @@ walk e (Var x) = case lookup x e of
                     Just t -> walk e t
 walk e (Atom a ts) = Atom a (map (walk e) ts)
 walk e (Conjunction ts) = Conjunction (map (walk e) ts)
-walk e (Truth b) = Truth b
 
 -- checking for instance for folding
 
@@ -57,7 +54,6 @@ inst (Var x) t s = if   x `elem` fst (unzip s)
                    else Just ((x,t):s)
 inst (Atom a ts) (Atom a' ts') s | a==a' && length ts==length ts' = foldrM (\(t,t') s -> inst t t' s) s (zip ts ts')
 inst (Conjunction ts) (Conjunction ts') s | length ts==length ts' = foldrM (\(t,t') s -> inst t t' s) s (zip ts ts')
-inst (Truth b) (Truth b') s | b==b' = Just s
 inst t t' s = Nothing
 
 -- chacking for embedding for generalisation
@@ -67,7 +63,6 @@ embedding (t,u) = couple t u || dive t u
 couple (Var x) (Var x') = True
 couple (Atom a ts) (Atom a' ts') | a==a' && length ts==length ts' = all embedding (zip ts ts')
 couple (Conjunction ts) (Conjunction ts') | length ts==length ts' = all embedding (zip ts ts')
-couple (Truth b) (Truth b') = True
 couple t t' = False
 
 dive t (Atom a ts) = any (\t' -> embedding (t,t')) ts
@@ -85,7 +80,6 @@ generalise' (Atom a ts) (Atom a' ts') xs s1 s2 | a==a' = let (ts'',s1',s2') = fo
 generalise' (Conjunction ts) (Conjunction ts') xs s1 s2 = let ((s1',s2'),ts'') = mapAccumL (\(s1,s2) (t,t') -> let (t'',s1',s2') = generalise' t t' xs s1 s2
                                                                                                                in  ((s1',s2'),t'')) (s1,s2) (zip ts ts')
                                                           in  (Conjunction ts'',s1',s2')
-generalise' (Truth b) (Truth b') xs s1 s2 | b==b' = (Truth b,s1,s2)
 generalise' t t' xs s1 s2 = case find (\(x,u) -> t==u && (lookup x s2 == Just t')) s1 of
                                Just (x,u) -> (Var x,s1,s2)
                                Nothing -> let x = renameVar (xs++fst(unzip s1)) "X"
@@ -98,9 +92,8 @@ split t s = [t]
 
 split' [] s = []
 split' (Var x:ts) s = instantiate s (Var x):split' ts s
-split' (Conjunction ts:ts') s = split' (ts++ts') s
 split' ts s = let (ts1,ts2) = break isVar ts
-              in  makeConjunction ts1:split' ts2 s
+              in  Conjunction ts1:split' ts2 s
 
 flatten [] = []
 flatten (Conjunction ts:ts') = flatten (ts++ts')
@@ -114,14 +107,13 @@ isVar t = False
 instantiate s (Var x) = fromMaybe (Var x) (lookup x s)
 instantiate s (Atom a ts) = Atom a (map (instantiate s) ts)
 instantiate s (Conjunction ts) = Conjunction (map (instantiate s) ts)
-instantiate s (Truth b) = Truth b
 
 -- evaluate a conjunction: this is a depth-first evaluation which evaluates all resultants, so may not terminate!
 
 eval t d = let xs = vars t
            in  [map (walk e.Var) xs | e <- eval' t d [] xs]
 
-eval' (Truth True) d e xs = [e]
+eval' (Conjunction []) d e xs = [e]
 eval' t d e xs = concat [eval' t' d e' xs' | (t',e',xs') <- unfold t d e xs]
 
 matches t d e xs = [(h,t') | (h,t') <- map (renameClause xs) d, isJust (unify h t e)]
@@ -130,13 +122,12 @@ matches t d e xs = [(h,t') | (h,t') <- map (renameClause xs) d, isJust (unify h 
 
 unfold t d e xs = concat [returnval (furtherUnfold t' [] d e' xs') | (t',e',xs') <- leftUnfold t d e xs]
 
-leftUnfold (Truth True) d e xs = [(Truth True,e,xs)]
+leftUnfold (Conjunction []) d e xs = [(Conjunction [],e,xs)]
 leftUnfold (t@(Atom _ _)) d e xs = [(t',fromJust (unify h t e),xs++vars h++vars t') | (h,t') <- matches t d e xs]
-leftUnfold (Conjunction (t:ts)) d e xs = [(makeConjunction (t':ts),e',xs') | (t',e',xs') <- leftUnfold t d e xs]
+leftUnfold (Conjunction (t:ts)) d e xs = [(Conjunction (simplify (t':ts)),e',xs') | (t',e',xs') <- leftUnfold t d e xs]
 
 -- locally unfold until global choice point
 
-furtherUnfold (Truth True) m d e xs = return [(Truth True,e,xs)]
 furtherUnfold (t@(Atom _ _)) m d e xs = let t' = walk e t
                                         in  case find (`couple` t') m of
                                                Just t'' -> throw t''
@@ -149,7 +140,7 @@ furtherUnfold (t@(Atom _ _)) m d e xs = let t' = walk e t
                                                                       ) handler
 furtherUnfold (Conjunction ts) m d e xs = do
                                           tsexs <- furtherUnfold' ts m d e xs
-                                          return [(makeConjunction ts',e',xs') | (ts',e',xs') <- tsexs]
+                                          return [(Conjunction (simplify ts'),e',xs') | (ts',e',xs') <- tsexs]
 
 furtherUnfold' [] m d e xs = return [([],e,xs)]
 furtherUnfold' (t:ts) m d e xs = do
@@ -164,7 +155,6 @@ vars t = vars' t []
 vars' (Var x) xs = if x `elem` xs then xs else x:xs
 vars' (Atom a ts) xs = foldr vars' xs ts
 vars' (Conjunction ts) xs = foldr vars' xs ts
-vars' (Truth b) xs = xs
 
 -- rename variables
 
@@ -179,7 +169,6 @@ renameTerm r (Var x) = case lookup x r of
 renameTerm r (Atom a ts) = Atom a (map (renameTerm r) ts)
 
 renameTerm r (Conjunction ts) = Conjunction (map (renameTerm r) ts)
-renameTerm r (Truth b) = Truth b
 
 renameVar xs x = if x `elem` xs then renameVar xs (x++"'") else x
 
@@ -191,28 +180,18 @@ renameAtom r (Atom a ts) = case lookup a r of
 
 atomName (Atom a ts) = a
 
--- convert a list of terms into a conjunction
-
-makeConjunction ts = makeConjunction' (simplify ts)
-
-makeConjunction' [] = Truth True
-makeConjunction' [t] = t
-makeConjunction' ts = Conjunction ts
-
--- simplify a conjunction to remove true conjuncts
+-- simplify a conjunction to remove empty conjuncts
 
 simplify [] = []
-simplify (Truth True:ts) = simplify ts
+simplify (Conjunction []:ts) = simplify ts
 simplify (t:ts) = t:simplify ts
 
 -- pretty printing
 
 prettyProg (t,d) = vcat (map prettyClause d) $$ text "<-" <+> prettyTerm t <> text "."
 
-prettyClause (h,Truth True) = prettyTerm h <> text "."
+prettyClause (h,Conjunction []) = prettyTerm h <> text "."
 prettyClause (h,t) = prettyTerm h <+> text "<-" <+> prettyTerm t <> text "."
-
-
 
 prettyTerm (Var x) = text x
 prettyTerm t@(Atom a ts)
@@ -220,9 +199,7 @@ prettyTerm t@(Atom a ts)
    | isList t = text "[" <> term2list t <> text "]"
    | null ts = text a
    | otherwise = text a <> parens (hcat $ punctuate comma $ map prettyTerm ts)
-prettyTerm (Conjunction []) = text "true"
 prettyTerm (Conjunction ts) = hcat (punctuate comma (map prettyTerm ts))
-prettyTerm (Truth b) = if b then text "true" else text "false"
 
 isList (Atom "nil" []) = True
 isList (Atom "cons" [h,t]) = True
@@ -252,7 +229,7 @@ potDef = emptyDef
          , nestedComments  = True
          , identStart      = upper <|> P.char '_'
          , identLetter     = letter <|> digit <|> oneOf "_'"
-         , reservedNames   = ["true","false","zero","succ","nil","cons"]
+         , reservedNames   = ["zero","succ","nil","cons"]
          , caseSensitive   = True
          }
 
@@ -279,10 +256,10 @@ body = do
        symbol "<-"
        ts <- sepBy1 structure (symbol ",")
        symbol "."
-       return $ makeConjunction ts
+       return $ Conjunction ts
    <|> do
        symbol "."
-       return $ Truth True
+       return $ Conjunction []
 
 structure = do
             a <- atom
@@ -301,12 +278,6 @@ term =     do
            l <- list
            symbol "]"
            return l
-       <|> do
-           reserved "true"
-           return $ Truth True
-       <|> do
-           reserved "false"
-           return $ Truth False
 
 args =     do
            symbol "("

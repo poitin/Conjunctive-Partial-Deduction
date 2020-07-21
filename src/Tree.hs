@@ -10,20 +10,20 @@ data Tree = Node Term Tree -- a memoised node
           | And [Tree] -- a conjunction
           | Gen [(String,Term)] Tree -- a most specific generalisation giving the generalisation substitution
           | BackEdge Term -- an instance of a previous conjunction
-          | Leaf Bool -- failure or success
+          | Success -- success
    deriving (Show)
 
 -- construct a program from a tree
 
 residualise b = residualise' b [] []
 
-residualise'(Leaf b) m d = (Truth b,d)
+residualise' Success m d = (Conjunction [],d)
 residualise' (Node t b) m d = let a = renameVar (map atomName (fst(unzip (d++m)))) "p"
                                   h = Atom a (map Var (vars t))
                                   d' = residualiseClause h b ((h,t):m) d
                               in  (h,d')
 residualise' (And bs) m d = let (d',ts) = mapAccumL (\d b -> let (t,d') = residualise' b m d in  (d',t)) d bs
-                            in  (makeConjunction ts,d')
+                            in  (Conjunction (simplify ts),d')
 residualise' (Gen s b) m d = let (t,d') = residualise' b m d
                              in  (instantiate s t,d')
 residualise' (BackEdge t) m d = case find (\(h,t') -> isInst t' t) m of
@@ -43,7 +43,7 @@ residualiseClause h b m d = let (t,d') = residualise' b m d
 
 -- backedges in a tree
 
-backedges (Leaf _) = []
+backedges Success = []
 backedges (Node t b) = backedges b
 backedges (Or ebs) = concat [backedges b | (e,b) <- ebs]
 backedges (Gen _ b) = backedges b
@@ -55,7 +55,7 @@ backedges (And bs) = concat [backedges b | b <- bs]
 trans (t,d) = let t' = returnval (trans' t [] d [] (vars t))
               in  residualise t'
 
-trans' (Truth b) m d e xs = return (Leaf b)
+trans' (Conjunction []) m d e xs = return Success
 trans' t m d e xs = let t' = walk e t
                     in  case find (`isInst` t') m of
                            Just _ -> return (BackEdge t')
