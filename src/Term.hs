@@ -93,7 +93,9 @@ split t s = [t]
 split' [] s = []
 split' (Var x:ts) s = instantiate s (Var x):split' ts s
 split' ts s = let (ts1,ts2) = break isVar ts
-              in  Conjunction ts1:split' ts2 s
+              in  makeConjunction ts1:split' ts2 s
+
+-- flatten list of conjuncts
 
 flatten [] = []
 flatten (Conjunction ts:ts') = flatten (ts++ts')
@@ -186,6 +188,11 @@ simplify [] = []
 simplify (Conjunction []:ts) = simplify ts
 simplify (t:ts) = t:simplify ts
 
+-- simplify conjunction containing one term
+
+makeConjunction [t] = t
+makeConjunction ts = Conjunction ts
+
 -- pretty printing
 
 prettyProg (t,d) = vcat (map prettyClause d) $$ text "<-" <+> prettyTerm t <> text "."
@@ -256,7 +263,7 @@ body = do
        symbol "<-"
        ts <- sepBy1 structure (symbol ",")
        symbol "."
-       return $ Conjunction ts
+       return $ makeConjunction ts
    <|> do
        symbol "."
        return $ Conjunction []
