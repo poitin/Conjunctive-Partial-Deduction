@@ -55,14 +55,14 @@ trans (t,d) = let t' = returnval (trans' t [] d [] (vars t))
 trans' (Conjunction []) m d e xs = return (And [])
 trans' t m d e xs = let t' = walk e t
                     in  case find (`isInst` t') m of
-                           Just _ -> return (BackEdge t')
+                           Just t'' -> return (BackEdge t')
                            Nothing -> case find (`couple` t') m of
                                          Just t'' -> throw (t'',t')
                                          Nothing ->  let handler (t,t'') = if   t==t'
-                                                                           then let (u,s1,s2) = generalise t' t''
+                                                                           then let (u,s1,s2) = generalise t' t'' xs [] []
                                                                                     ts = split u s1
                                                                                 in  do
-                                                                                    bs <- mapM (\t -> trans' t m d e (xs++fst(unzip s1))) ts
+                                                                                    bs <- mapM (\t -> trans' t m d [] (xs++fst(unzip s1))) ts
                                                                                     return (Gen s1 (And bs))
                                                                            else throw (t,t'')
                                             in  handle (fold t' m d (unfold t d e xs)) handler

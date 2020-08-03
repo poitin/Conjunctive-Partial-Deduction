@@ -71,19 +71,17 @@ dive t t' = False
 
 -- most specific generalisation
 
-generalise t t' = generalise' t t' (vars t) [] []
-
-generalise' (Var x) (Var x') xs s1 s2 | x==x' = (Var x,s1,s2)
-generalise' (Atom a ts) (Atom a' ts') xs s1 s2 | a==a' = let (ts'',s1',s2') = foldr (\(t,t') (ts,s1,s2) -> let (t'',s1',s2') = generalise' t t' xs s1 s2
-                                                                                                           in  (t'':ts,s1',s2')) ([],s1,s2) (zip ts ts')
-                                                         in  (Atom a ts'',s1',s2')
-generalise' (Conjunction ts) (Conjunction ts') xs s1 s2 = let ((s1',s2'),ts'') = mapAccumL (\(s1,s2) (t,t') -> let (t'',s1',s2') = generalise' t t' xs s1 s2
-                                                                                                               in  ((s1',s2'),t'')) (s1,s2) (zip ts ts')
-                                                          in  (Conjunction ts'',s1',s2')
-generalise' t t' xs s1 s2 = case find (\(x,u) -> t==u && (lookup x s2 == Just t')) s1 of
-                               Just (x,u) -> (Var x,s1,s2)
-                               Nothing -> let x = renameVar (xs++fst(unzip s1)) "X"
-                                          in  (Var x,(x,t):s1,(x,t'):s2)
+generalise (Var x) (Var x') xs s1 s2 | x==x' = (Var x,s1,s2)
+generalise (Atom a ts) (Atom a' ts') xs s1 s2 | a==a' = let (ts'',s1',s2') = foldr (\(t,t') (ts,s1,s2) -> let (t'',s1',s2') = generalise t t' xs s1 s2
+                                                                                                          in  (t'':ts,s1',s2')) ([],s1,s2) (zip ts ts')
+                                                        in  (Atom a ts'',s1',s2')
+generalise (Conjunction ts) (Conjunction ts') xs s1 s2 = let ((s1',s2'),ts'') = mapAccumL (\(s1,s2) (t,t') -> let (t'',s1',s2') = generalise t t' xs s1 s2
+                                                                                                              in  ((s1',s2'),t'')) (s1,s2) (zip ts ts')
+                                                         in  (Conjunction ts'',s1',s2')
+generalise t t' xs s1 s2 = case find (\(x,u) -> t==u && (lookup x s2 == Just t')) s1 of
+                              Just (x,u) -> (Var x,s1,s2)
+                              Nothing -> let x = renameVar (xs++fst(unzip s1)) "X"
+                                         in  (Var x,(x,t):s1,(x,t'):s2)
 
 -- split conjunction resulting from generalisation
 
@@ -126,12 +124,12 @@ unfold t d e xs = concat [returnval (furtherUnfold t' [] d e' xs') | (t',e',xs')
 
 leftUnfold (Conjunction []) d e xs = [(Conjunction [],e,xs)]
 leftUnfold (t@(Atom _ _)) d e xs = [(t',fromJust (unify h t e),xs++vars h++vars t') | (h,t') <- matches t d e xs]
-leftUnfold (Conjunction (t:ts)) d e xs = [(Conjunction (simplify (t':ts)),e',xs') | (t',e',xs') <- leftUnfold t d e xs]
+leftUnfold (Conjunction (t:ts)) d e xs = [(makeConjunction (simplify (t':ts)),e',xs') | (t',e',xs') <- leftUnfold t d e xs]
 
 -- locally unfold until global choice point
 
 furtherUnfold (t@(Atom _ _)) m d e xs = let t' = walk e t
-                                        in  case find (`couple` t') m of
+                                        in  case find (\ t'' -> embedding(t'',t')) m of
                                                Just t'' -> throw t''
                                                Nothing ->  let handler t'' = if   t'==t''
                                                                              then return [(t,e,xs)]
@@ -142,7 +140,7 @@ furtherUnfold (t@(Atom _ _)) m d e xs = let t' = walk e t
                                                                       ) handler
 furtherUnfold (Conjunction ts) m d e xs = do
                                           tsexs <- furtherUnfold' ts m d e xs
-                                          return [(Conjunction (simplify ts'),e',xs') | (ts',e',xs') <- tsexs]
+                                          return [(makeConjunction (simplify ts'),e',xs') | (ts',e',xs') <- tsexs]
 
 furtherUnfold' [] m d e xs = return [([],e,xs)]
 furtherUnfold' (t:ts) m d e xs = do
