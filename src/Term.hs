@@ -129,7 +129,7 @@ leftUnfold (Conjunction (t:ts)) d e xs = [(makeConjunction (simplify (t':ts)),e'
 -- locally unfold until global choice point
 
 furtherUnfold (t@(Atom _ _)) m d e xs = let t' = walk e t
-                                        in  case find (\ t'' -> embedding(t'',t')) m of
+                                        in  case find (`couple` t') m of
                                                Just t'' -> throw t''
                                                Nothing ->  let handler t'' = if   t'==t''
                                                                              then return [(t,e,xs)]
